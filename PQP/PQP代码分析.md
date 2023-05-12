@@ -287,7 +287,45 @@ int PQP_Model::EndModel()
 
 构建BV树模型的函数：
 
-1. 
+1. 求取协方差函数：
+
+函数的依据的数学公式：
+$$
+平均值：{\rm{\bar X  =  }}\frac{{\sum\limits_{i = 1}^n {{X_i}} }}{n}\\
+标准差：S = \sqrt {\frac{{\sum\limits_{i = 1}^n {{{({X_i} - {\rm{\bar X}})}^2}} }}{{n - 1}}}  \\
+方差：{S^2} = \frac{{\sum\limits_{i = 1}^n {{{({X_i} - {\rm{\bar X}})}^2}} }}{{n - 1}} \\
+协方差:\begin{array}{l}
+{\mathop{\rm var}} (X) = \frac{{\sum\limits_{i = 1}^n {({X_i} - {\rm{\bar X}})({X_i} - {\rm{\bar X}})} }}{{n - 1}}\\
+{\mathop{\rm cov}} (X,Y) = \frac{{\sum\limits_{i = 1}^n {({X_i} - {\rm{\bar X}})({Y_i} - {\rm{\bar Y}})} }}{{n - 1}}
+\end{array} \\
+\begin{array}{l} \\
+且有:{\mathop{\rm cov}} (X,X) = {\mathop{\rm var}} (X) \\
+{~~~~~~~~~~}{\mathop{\rm cov}} (X,Y) = {\mathop{\rm cov}} (Y,X)
+\end{array}
+$$
+
+协方差矩阵：
+
+数据为：${x_i} = \left[ {\begin{array}{*{20}{c}}
+{{a_{i1}}}&{{a_{i2}}}& \cdots &{{a_{in}}}
+\end{array}} \right]$
+$$
+{X_{m \times n}} = \left[ {\begin{array}{*{20}{c}}
+{{a_{11}}}&{{a_{12}}}& \cdots &{{a_{1n}}}\\
+{{a_{21}}}&{{a_{22}}}& \cdots &{{a_{2n}}}\\
+ \vdots & \vdots & \vdots & \vdots \\
+{{a_{m1}}}&{{a_{m2}}}&{}&{{a_{mn}}}
+\end{array}} \right] = \left[ {\begin{array}{*{20}{c}}
+{{X_1}}&{{X_2}}& \cdots &{{X_n}}
+\end{array}} \right]\\
+{\mathop{\rm cov}} {[X_{m \times n}]} = \left[ {\begin{array}{*{20}{c}}
+{{\mathop{\rm cov}} ({X_1},{X_1})}& \cdots &{{\mathop{\rm cov}} ({X_1},{X_n})}\\
+ \vdots & \ddots & \vdots \\
+{{\mathop{\rm cov}} ({X_n},{X_1})}& \cdots &{{\mathop{\rm cov}} ({X_n},{X_n})}
+\end{array}} \right]
+$$
+
+
 
 ```C++
 void get_covariance_triverts(PQP_REAL M[3][3], Tri *tris, int num_tris)
@@ -324,15 +362,127 @@ void get_covariance_triverts(PQP_REAL M[3][3], Tri *tris, int num_tris)
 
     // now get covariances
 
-    M[0][0] = S2[0][0] - S1[0] * S1[0] / n;
-    M[1][1] = S2[1][1] - S1[1] * S1[1] / n;
-    M[2][2] = S2[2][2] - S1[2] * S1[2] / n;
-    M[0][1] = S2[0][1] - S1[0] * S1[1] / n;
-    M[1][2] = S2[1][2] - S1[1] * S1[2] / n;
-    M[0][2] = S2[0][2] - S1[0] * S1[2] / n;
+    M[0][0] = (S2[0][0] - S1[0] * S1[0] / n) / (n - 1);
+    M[1][1] = (S2[1][1] - S1[1] * S1[1] / n) / (n - 1);
+    M[2][2] = (S2[2][2] - S1[2] * S1[2] / n) / (n - 1);
+    M[0][1] = (S2[0][1] - S1[0] * S1[1] / n) / (n - 1);
+    M[1][2] = (S2[1][2] - S1[1] * S1[2] / n) / (n - 1);
+    M[0][2] = (S2[0][2] - S1[0] * S1[2] / n) / (n - 1);
     M[1][0] = M[0][1];
     M[2][0] = M[0][2];
     M[2][1] = M[1][2];
+}
+```
+
+2. 求取特征值$dout[3]$和特征向量$vout[3][3]$
+
+```C++
+void inline Meigen(PQP_REAL vout[3][3], PQP_REAL dout[3], PQP_REAL a[3][3])
+{
+    int n = 3;
+    int j, iq, ip, i;
+    PQP_REAL tresh, theta, tau, t, sm, s, h, g, c;
+    int nrot;
+    PQP_REAL b[3];
+    PQP_REAL z[3];
+    PQP_REAL v[3][3];
+    PQP_REAL d[3];
+
+    Midentity(v);
+    for (ip = 0; ip < n; ip++)
+    {
+        b[ip] = a[ip][ip];
+        d[ip] = a[ip][ip];
+        z[ip] = 0.0;
+    }
+
+    nrot = 0;
+
+    for (i = 0; i < 50; i++)
+    {
+       
+        sm = 0.0;
+        for (ip = 0; ip < n; ip++)
+        {
+            for (iq = ip + 1; iq < n; iq++)
+            {
+                //判断上三角矩阵对应值的和是否为0,如下
+        		//x  0  0
+                //x  x  0
+                //x  x  x
+                sm += fabs(a[ip][iq]);
+            }
+        }
+
+        if (sm == 0.0)
+        {
+            McM(vout, v);//将v赋给vout
+            VcV(dout, d);//将d赋给dout
+            return;
+        }
+
+        if (i < 3)
+            tresh = (PQP_REAL)0.2 * sm / (n * n);
+        else
+            tresh = 0.0;
+
+        for (ip = 0; ip < n; ip++)
+            for (iq = ip + 1; iq < n; iq++)
+            {
+                g = (PQP_REAL)100.0 * fabs(a[ip][iq]);
+                if (i > 3 && fabs(d[ip]) + g == fabs(d[ip]) && fabs(d[iq]) + g == fabs(d[iq]))
+                    a[ip][iq] = 0.0;
+                else if (fabs(a[ip][iq]) > tresh)
+                {
+                    h = d[iq] - d[ip];
+                    if (fabs(h) + g == fabs(h))
+                        t = (a[ip][iq]) / h;
+                    else
+                    {
+                        theta = (PQP_REAL)0.5 * h / (a[ip][iq]);
+                        t = (PQP_REAL)(1.0 / (fabs(theta) + sqrt(1.0 + theta * theta)));
+                        if (theta < 0.0)
+                            t = -t;
+                    }
+                    c = (PQP_REAL)1.0 / sqrt(1 + t * t);
+                    s = t * c;
+                    tau = s / ((PQP_REAL)1.0 + c);
+                    h = t * a[ip][iq];
+                    z[ip] -= h;
+                    z[iq] += h;
+                    d[ip] -= h;
+                    d[iq] += h;
+                    a[ip][iq] = 0.0;
+                    for (j = 0; j < ip; j++)
+                    {
+                        ROTATE(a, j, ip, j, iq);
+                    }
+                    for (j = ip + 1; j < iq; j++)
+                    {
+                        ROTATE(a, ip, j, j, iq);
+                    }
+                    for (j = iq + 1; j < n; j++)
+                    {
+                        ROTATE(a, ip, j, iq, j);
+                    }
+                    for (j = 0; j < n; j++)
+                    {
+                        ROTATE(v, j, ip, j, iq);
+                    }
+                    nrot++;
+                }
+            }
+        for (ip = 0; ip < n; ip++)
+        {
+            b[ip] += z[ip];
+            d[ip] = b[ip];
+            z[ip] = 0.0;
+        }
+    }
+
+    fprintf(stderr, "eigen: too many iterations in Jacobi transform.\n");
+
+    return;
 }
 ```
 
@@ -434,4 +584,13 @@ int build_recurse(PQP_Model *m, int bn, int first_tri, int num_tris)
     return PQP_OK;
 }
 ```
+
+| $i$  | $w_i$     | $v_i$        |                    |
+| ---- | --------- | ------------ | ------------------ |
+| 1    | $(0,0,1)$ | $(0,0,0)$    | $(0,0,1,0,0,0)$    |
+| 2    | $(0,1,0)$ | $(0,0,0)$    | $(0,1,0,0,0,0)$    |
+| 3    | $(0,1,0)$ | $(0,20,400)$ | $(0,1,0,-400,0,0)$ |
+| 4    | $(0,0,1)$ | $(0,20,850)$ | $(0,0,1,20,0,0)$   |
+| 5    | $(0,1,0)$ | $(0,20,850)$ | $(0,1,0,-850,0,0)$ |
+| 6    | $(0,0,1)$ | $(0,20,850)$ | $(0,0,1,20,0,0)$   |
 
